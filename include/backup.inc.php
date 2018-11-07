@@ -21,19 +21,19 @@ IN THE SOFTWARE.
 set_time_limit(0);
 
 if (!defined('date.timezone')) {
-	ini_set('date.timezone', 'America/Los_Angeles');
+    ini_set('date.timezone', 'America/Los_Angeles');
 }
 
 if (!defined('debug')) {
-	define('debug', false);
+    define('debug', false);
 }
 
 if (!defined('awsEndpoint')) {
-	define('awsEndpoint', 's3.amazonaws.com');
+    define('awsEndpoint', 's3.amazonaws.com');
 }
 
 if (!defined('mysqlDumpOptions')) {
-	define('mysqlDumpOptions', '--quote-names --quick --add-drop-table --add-locks --allow-keywords --disable-keys --extended-insert --single-transaction --create-options --comments --net_buffer_length=16384');
+    define('mysqlDumpOptions', '--quote-names --quick --add-drop-table --add-locks --allow-keywords --disable-keys --extended-insert --single-transaction --create-options --comments --net_buffer_length=16384');
 }
 
 // includes
@@ -49,22 +49,22 @@ $s3 = new Aws\S3\S3Client([
     'version' => 'latest',
     'region' => awsEndpoint,
     'credentials' => [
-        'key'    => awsAccessKey,
+        'key' => awsAccessKey,
         'secret' => awsSecretKey,
     ]
 ]);
 
 //delete old backups
 switch (schedule) {
-	case "weekly":
-		deleteWeeklyBackups();
-		break;
-	case "hourly":
-		deleteHourlyBackups();
-		break;
-	default:
-		deleteDailyBackups();
-		break;
+    case "weekly":
+        deleteWeeklyBackups();
+        break;
+    case "hourly":
+        deleteHourlyBackups();
+        break;
+    default:
+        deleteDailyBackups();
+        break;
 }
 
 //Setup variables
@@ -73,99 +73,103 @@ $mysql_backup_options = mysqlDumpOptions;
 // Backup functions
 
 // Backup files and compress for storage
-function backupFiles($targets, $prefix = '') {
-  global $s3;
+function backupFiles($targets, $prefix = '')
+{
+    global $s3;
 
-  if (schedule == "hourly") deleteHourlyBackups($prefix);
+    if (schedule == "hourly") deleteHourlyBackups($prefix);
 
-  foreach ($targets as $target) {
+    foreach ($targets as $target) {
 
-    if (debug == true) {
-      echo "Backing up: $target\n";
+        if (debug == true) {
+            echo "Backing up: $target\n";
+        }
+
+        if (strpos($target, '/') === 0) {
+            $target = strrev(rtrim(strrev($target), '/'));
+        }
+
+        if (debug == true) {
+            echo "Relative from root: $target\n";
+        }
+
+        // compress local files
+        $cleanTarget = urlencode($target);
+        `tar -cjf "$prefix-$cleanTarget.tar.bz2" -C / "$target"`;
+
+        $backup_to = s3Path($prefix, "/" . $target . "backup.tar.bz2");
+
+        if (debug == true) {
+            echo "Backing up to: " . $backup_to . "\n";
+        }
+
+        uploadForce($s3, "$prefix-$cleanTarget.tar.bz2", $backup_to);
+
+        // remove temp file
+        `rm -rf "$prefix-$cleanTarget.tar.bz2"`;
     }
-
-    if (strpos($target,'/') === 0) {
-      $target = strrev(rtrim(strrev($target),'/'));
-    }
-
-    if (debug == true) {
-      echo "Relative from root: $target\n";
-    }
-
-    // compress local files
-    $cleanTarget = urlencode($target);
-    `tar -cjf "$prefix-$cleanTarget.tar.bz2" -C / "$target"`;
-
-    $backup_to = s3Path($prefix,"/".$target."backup.tar.bz2");
-
-    if (debug == true) {
-      echo "Backing up to: ".$backup_to."\n";
-    }
-
-    uploadForce($s3, "$prefix-$cleanTarget.tar.bz2", $backup_to);
-
-    // remove temp file
-    `rm -rf "$prefix-$cleanTarget.tar.bz2"`;
-  }
 }
 
 // Backup all Mysql DBs using mysqldump
-function backupDBs($hostname, $username, $password, $prefix, $post_backup_query = '') {
-  global $DATE, $s3, $mysql_backup_options;
+function backupDBs($hostname, $username, $password, $prefix, $post_backup_query = '')
+{
+    global $DATE, $s3, $mysql_backup_options;
 
-	if (schedule == "hourly") deleteHourlyBackups($prefix);
+    if (schedule == "hourly") deleteHourlyBackups($prefix);
 
-  // Connecting, selecting database
-  $link = mysql_connect($hostname, $username, $password) or die('Could not connect: ' . mysql_error());
+    // Connecting, selecting database
+    $link = mysql_connect($hostname, $username, $password) or die('Could not connect: ' . mysql_error());
 
-  $query = 'SHOW DATABASES';
-  $result = mysql_query($query) or die('Query failed: ' . mysql_error());
+    $query = 'SHOW DATABASES';
+    $result = mysql_query($query) or die('Query failed: ' . mysql_error());
 
-  $databases = array();
+    $databases = array();
 
-  while ($row = mysql_fetch_array($result, MYSQL_ASSOC)) {
-      foreach ($row as $database) {
-      $databases[] = $database;
-      }
-  }
+    while ($row = mysql_fetch_array($result, MYSQL_ASSOC)) {
+        foreach ($row as $database) {
+            $databases[] = $database;
+        }
+    }
 
-  // Free resultset
-  mysql_free_result($result);
+    // Free resultset
+    mysql_free_result($result);
 
-  //Run backups on each DB found
-  foreach ($databases as $database) {
-    backupDB($hostname, $username, $password, $database, $prefix, $post_backup_query = '');
-  }
+    //Run backups on each DB found
+    foreach ($databases as $database) {
+        backupDB($hostname, $username, $password, $database, $prefix, $post_backup_query = '');
+    }
 
-  //Run post backup queries if needed
-  if ($post_backup_query != '') {
-    $result = mysql_query($post_backup_query) or die('Query failed: ' . mysql_error());
-  }
+    //Run post backup queries if needed
+    if ($post_backup_query != '') {
+        $result = mysql_query($post_backup_query) or die('Query failed: ' . mysql_error());
+    }
 
-  // Closing connection
-  mysql_close($link);
+    // Closing connection
+    mysql_close($link);
 
 }
 
-function backupDB($hostname, $username, $password, $database, $prefix, $post_backup_query = '') {
-	global $s3, $mysql_backup_options;
+function backupDB($hostname, $username, $password, $database, $prefix, $post_backup_query = '')
+{
+    global $s3, $mysql_backup_options;
 
-	`/usr/bin/mysqldump $mysql_backup_options --no-data --host=$hostname --user=$username --password='$password' $database | bzip2  > $database-structure-backup.sql.bz2`;
-  `/usr/bin/mysqldump $mysql_backup_options --host=$hostname --user=$username --password='$password' $database | bzip2 > $database-data-backup.sql.bz2`;
+    `/usr/bin/mysqldump $mysql_backup_options --no-data --host=$hostname --user=$username --password='$password' $database | bzip2  > $database-structure-backup.sql.bz2`;
+    `/usr/bin/mysqldump $mysql_backup_options --host=$hostname --user=$username --password='$password' $database | bzip2 > $database-data-backup.sql.bz2`;
 
-  uploadForce($s3, "$database-structure-backup.sql.bz2", s3Path($prefix,"/".$database."-structure-backup.sql.bz2"));
-  uploadForce($s3,"$database-data-backup.sql.bz2",s3Path($prefix,"/".$database."-data-backup.sql.bz2"));
-  
-  `rm -rf $database-structure-backup.sql.bz2 $database-data-backup.sql.bz2`;
+    uploadForce($s3, "$database-structure-backup.sql.bz2", s3Path($prefix, "/" . $database . "-structure-backup.sql.bz2"));
+    uploadForce($s3, "$database-data-backup.sql.bz2", s3Path($prefix, "/" . $database . "-data-backup.sql.bz2"));
+
+    `rm -rf $database-structure-backup.sql.bz2 $database-data-backup.sql.bz2`;
 }
 
-function xtrabackupDBs($database, $username, $password, $xtrabackup, $datadir, $innodb_log_file_size, $prefix, $post_backup_query = '') {
-  global $DATE, $s3, $mysql_backup_options;
+function xtrabackupDBs($database, $username, $password, $xtrabackup, $datadir, $innodb_log_file_size, $prefix, $post_backup_query = '')
+{
+    global $DATE, $s3, $mysql_backup_options;
 
-  if (schedule == "hourly") deleteHourlyBackups($prefix);
+    if (schedule == "hourly") deleteHourlyBackups($prefix);
 
-  // Get backup of schema
-  `/usr/bin/mysqldump $mysql_backup_options --no-data --host=$hostname --user=$username --password='$password' $database | bzip2  > $database-structure-backup.sql.bz2`;
+    // Get backup of schema
+    `/usr/bin/mysqldump $mysql_backup_options --no-data --host=$hostname --user=$username --password='$password' $database | bzip2  > $database-structure-backup.sql.bz2`;
     uploadForce($s3, "$database-structure-backup.sql.bz2", s3Path($prefix, "/" . $database . "-structure-backup.sql.bz2"));
     uploadForce($s3, "$database-structure-backup.sql.bz2", s3Path($prefix, "/" . $database . "-structure-backup.sql.bz2"));
     `rm -rf $database-structure-backup.sql.bz2`;
@@ -177,96 +181,100 @@ function xtrabackupDBs($database, $username, $password, $xtrabackup, $datadir, $
     uploadForce($s3, "/root/xtrabackup/$database-data-backup.tar.bz2", s3Path($prefix, "/" . $database . "-data-backup.tar.bz2"));
     `rm -rf /root/xtrabackup`;
 
-  // Connecting, selecting database
-  $link = mysql_connect($hostname, $username, $password) or die('Could not connect: ' . mysql_error());
+    // Connecting, selecting database
+    $link = mysql_connect($hostname, $username, $password) or die('Could not connect: ' . mysql_error());
 
-  //Run post backup queries if needed
-  if ($post_backup_query != '') {
-    $result = mysql_query($post_backup_query) or die('Query failed: ' . mysql_error());
-  }
-
-  // Closing connection
-  mysql_close($link);
-}
-
-function deleteHourlyBackups($target_prefix) {
-
-	deleteDailyBackups();
-
-  //delete hourly backups, 72 hours before now, except the midnight (00) backup
-  $set_date = strtotime('-72 hours');
-  if (schedule == "hourly") {
-    for ($i = 1; $i <= 23; $i++) {
-      $prefix = s3Path('','',$set_date,true).$target_prefix."/".str_pad((string)$i,2,"0",STR_PAD_LEFT)."/";
-      if (debug == true) echo("Deleting hourly backup: " . $prefix . "\n");
-      deletePrefix($prefix);
+    //Run post backup queries if needed
+    if ($post_backup_query != '') {
+        $result = mysql_query($post_backup_query) or die('Query failed: ' . mysql_error());
     }
-  }
+
+    // Closing connection
+    mysql_close($link);
 }
 
-function deleteWeeklyBackups() {
-	global $s3;
+function deleteHourlyBackups($target_prefix)
+{
 
-	//delete the backup from 36 weeks ago
-	$set_date = strtotime('-36 weeks');
-	$prefix = s3Path('','',$set_date,false);
+    deleteDailyBackups();
 
-	//only if it wasn't in January
-  if ((int)date('n',$set_date) !== 1) {
-		if (debug == true) echo "Deleting backup from 36 weeks ago: ".$prefix."\n";
-
-	  //delete each key found
-	  deletePrefix($prefix);
-	} else {
-		if (debug == true) echo "Will NOT delete backup from 36 weeks ago, because that was the January week: ".$prefix."\n";
-	}
-
-	//delete the backup from 16 weeks ago
-	$set_date = strtotime('-16 weeks');
-	$prefix = s3Path('','',$set_date,false);
-
-	//only if it wasn't the 1st 7 days of the month
-  if ((int)date('j',$set_date) > 7) {
-	  if (debug == true) echo "Deleting backup from 16 weeks ago: ".$prefix."\n";
-
-		deletePrefix($prefix);
-	} else {
-		if (debug == true) echo "Will NOT delete backup from 16 weeks ago, because that was the first week: ".$prefix."\n";
-	}
+    //delete hourly backups, 72 hours before now, except the midnight (00) backup
+    $set_date = strtotime('-72 hours');
+    if (schedule == "hourly") {
+        for ($i = 1; $i <= 23; $i++) {
+            $prefix = s3Path('', '', $set_date, true) . $target_prefix . "/" . str_pad((string)$i, 2, "0", STR_PAD_LEFT) . "/";
+            if (debug == true) echo("Deleting hourly backup: " . $prefix . "\n");
+            deletePrefix($prefix);
+        }
+    }
 }
 
-function deleteDailyBackups() {
-  global $s3;
+function deleteWeeklyBackups()
+{
+    global $s3;
 
-  //delete the backup from 2 months ago
-  $set_date = strtotime('-2 months');
+    //delete the backup from 36 weeks ago
+    $set_date = strtotime('-36 weeks');
+    $prefix = s3Path('', '', $set_date, false);
 
-  //only if it wasn't the first of the month or a Saturday
-  if ((int)date('j',$set_date) !== 1) {
-		//set s3 "dir" to delete
-	  $prefix = s3Path('','',$set_date,false);
+    //only if it wasn't in January
+    if ((int)date('n', $set_date) !== 1) {
+        if (debug == true) echo "Deleting backup from 36 weeks ago: " . $prefix . "\n";
 
-	  if (debug == true) echo "Deleting backup from 2 months ago: ".$prefix."\n";
+        //delete each key found
+        deletePrefix($prefix);
+    } else {
+        if (debug == true) echo "Will NOT delete backup from 36 weeks ago, because that was the January week: " . $prefix . "\n";
+    }
 
-	  //delete each key found
-	  deletePrefix($prefix);
-	}
+    //delete the backup from 16 weeks ago
+    $set_date = strtotime('-16 weeks');
+    $prefix = s3Path('', '', $set_date, false);
 
-  //delete the backup from 2 weeks ago
-	$set_date = strtotime('-2 weeks');
+    //only if it wasn't the 1st 7 days of the month
+    if ((int)date('j', $set_date) > 7) {
+        if (debug == true) echo "Deleting backup from 16 weeks ago: " . $prefix . "\n";
 
-	//only if it wasn't a saturday or the 1st
-  if ((int)date('j',$set_date) !== 1 && (string)date('l',$set_date) !== "Saturday") {
-		$prefix = s3Path('','',$set_date,false);
-	  if (debug == true) echo "Deleting backup from 2 weeks ago: ".$prefix."\n";
+        deletePrefix($prefix);
+    } else {
+        if (debug == true) echo "Will NOT delete backup from 16 weeks ago, because that was the first week: " . $prefix . "\n";
+    }
+}
 
-		deletePrefix($prefix);
-	}
+function deleteDailyBackups()
+{
+    global $s3;
+
+    //delete the backup from 2 months ago
+    $set_date = strtotime('-2 months');
+
+    //only if it wasn't the first of the month or a Saturday
+    if ((int)date('j', $set_date) !== 1) {
+        //set s3 "dir" to delete
+        $prefix = s3Path('', '', $set_date, false);
+
+        if (debug == true) echo "Deleting backup from 2 months ago: " . $prefix . "\n";
+
+        //delete each key found
+        deletePrefix($prefix);
+    }
+
+    //delete the backup from 2 weeks ago
+    $set_date = strtotime('-2 weeks');
+
+    //only if it wasn't a saturday or the 1st
+    if ((int)date('j', $set_date) !== 1 && (string)date('l', $set_date) !== "Saturday") {
+        $prefix = s3Path('', '', $set_date, false);
+        if (debug == true) echo "Deleting backup from 2 weeks ago: " . $prefix . "\n";
+
+        deletePrefix($prefix);
+    }
 
 }
 
-function deletePrefix($prefix) {
-  global $s3;
+function deletePrefix($prefix)
+{
+    global $s3;
 
     //find files to delete
     $result = $s3->listObjects([
@@ -274,31 +282,33 @@ function deletePrefix($prefix) {
         'Prefix' => $prefix
     ]);
 
-  foreach ($result['Contents'] as $object) {
-    if (debug == true) echo $object['Key']."\n";
-    $s3->deleteObject([
-        'Bucket' => awsBucket, // REQUIRED
-        'Key' => $object['Key']]);
-  }
+    foreach ($result['Contents'] as $object) {
+        if (debug == true) echo $object['Key'] . "\n";
+        $s3->deleteObject([
+            'Bucket' => awsBucket, // REQUIRED
+            'Key' => $object['Key']]);
+    }
 }
 
-function s3Path($prefix, $name, $timestamp = null, $force_hourly = null) {
-  if (is_null($timestamp)) $timestamp = time();
+function s3Path($prefix, $name, $timestamp = null, $force_hourly = null)
+{
+    if (is_null($timestamp)) $timestamp = time();
 
-  $date = date("Y/m/d/",$timestamp);
+    $date = date("Y/m/d/", $timestamp);
 
-  if (is_null($force_hourly) && schedule == "hourly") {
-    return "backups/".$date.$prefix.'/'.date('H',$timestamp).'-'.$name;
-  } else{
-    return "backups/".$date.$prefix.$name;
-  }
+    if (is_null($force_hourly) && schedule == "hourly") {
+        return "backups/" . $date . $prefix . '/' . date('H', $timestamp) . '-' . $name;
+    } else {
+        return "backups/" . $date . $prefix . $name;
+    }
 }
 
-function uploadForce($s3, $file, $targetFile) {
+function uploadForce($s3, $file, $targetFile)
+{
     $source = fopen($file, 'rb');
     $uploader = new MultipartUploader($s3, $source, [
         'bucket' => awsBucket,
-        'key'    => $targetFile,
+        'key' => $targetFile,
     ]);
 
     do {
