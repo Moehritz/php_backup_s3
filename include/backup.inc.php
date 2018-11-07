@@ -42,10 +42,8 @@ require 'aws/aws-autoloader.php';
 use Aws\S3\MultipartUploader;
 use Aws\Exception\MultipartUploadException;
 
-$credentials = new Aws\Credentials\Credentials(awsAccessKey, awsSecretKey);
 //Setup S3 class
 $s3 = new Aws\S3\S3Client([
-    'profile' => 'default',
     'version' => 'latest',
     'region' => awsEndpoint,
     'credentials' => [
