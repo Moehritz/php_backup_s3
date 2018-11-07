@@ -48,7 +48,10 @@ $s3 = new Aws\S3\S3Client([
     'profile' => 'default',
     'version' => 'latest',
     'region' => awsEndpoint,
-    'credentials' => $credentials
+    'credentials' => [
+        'key'    => awsAccessKey,
+        'secret' => awsSecretKey,
+    ]
 ]);
 
 //delete old backups
